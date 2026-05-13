@@ -45,6 +45,83 @@ def _sample_pairs(pairs, limit: int = 5):
     return preview
 
 
+def _side_prefix(rid: str) -> str:
+    rid = str(rid)
+    if rid.startswith("idx__"):
+        return "idx"
+    if "_" not in rid:
+        return ""
+    return rid.split("_", 1)[0]
+
+
+def _is_same_side_pair(left_id: str, right_id: str) -> bool:
+    left_side = _side_prefix(left_id)
+    right_side = _side_prefix(right_id)
+    return left_side in {"A", "B"} and left_side == right_side
+
+
+def _load_row_count(path: str) -> int:
+    if not path or not os.path.isfile(path):
+        return 0
+    try:
+        return int(pd.read_csv(path).shape[0])
+    except Exception:
+        return 0
+
+
+def _infer_idx_offset(config: dict) -> int:
+    state_cfg = _state_config(config)
+    source_a = config.get("data_source_A") or state_cfg.get("data_source_A")
+    source_b = config.get("data_source_B") or state_cfg.get("data_source_B")
+    if source_a and source_b:
+        return _load_row_count(source_a)
+    return 0
+
+
+def _remap_id_to_idx(rid: str, offset: int) -> str:
+    rid = str(rid)
+    if rid.startswith("idx__"):
+        return rid
+    if rid.startswith("idx_"):
+        return rid.replace("idx_", "idx__", 1)
+    if rid.startswith("A_"):
+        suffix = rid.split("_", 1)[1]
+        return f"idx__{suffix}"
+    if rid.startswith("B_"):
+        suffix = rid.split("_", 1)[1]
+        try:
+            return f"idx__{offset + int(suffix)}"
+        except ValueError:
+            return rid
+    return rid
+
+
+def _filter_and_remap_pairs_to_idx(pairs, offset: int):
+    filtered_pairs = []
+    dropped_same_side = 0
+    dropped_unmapped = 0
+    for indexed_id, query_id, score in pairs:
+        if _is_same_side_pair(indexed_id, query_id):
+            dropped_same_side += 1
+            continue
+        remapped_indexed = _remap_id_to_idx(indexed_id, offset)
+        remapped_query = _remap_id_to_idx(query_id, offset)
+        if remapped_indexed == indexed_id and remapped_query == query_id and not (
+            remapped_indexed.startswith("idx__") and remapped_query.startswith("idx__")
+        ):
+            dropped_unmapped += 1
+            continue
+        filtered_pairs.append((remapped_indexed, remapped_query, float(score)))
+    return filtered_pairs, dropped_same_side, dropped_unmapped
+
+
+def _build_similarity_graph_from_pairs(final_pairs, output_format: str = "graphml"):
+    graph = SimilarityGraph(most_similar_num=1, output_format=output_format)
+    for indexed_id, query_id, score in final_pairs:
+        graph.add_similarity(str(indexed_id), [(str(query_id), float(score))])
+    return graph
+
+
 def load_config(config_path: str = CONFIG_PATH):
     if not os.path.exists(config_path):
         return {}
@@ -428,9 +505,17 @@ def decision_making(config, matching_pairs, model):
         raise ValueError("embedding_model must be initialized or loaded before decision_making.")
 
     matching_pairs = _normalize_matching_pairs(matching_pairs)
+    idx_offset = _infer_idx_offset(config)
+    filtered_pairs = []
+    dropped_same_side = 0
+    for indexed_id, query_id, score in matching_pairs:
+        if _is_same_side_pair(indexed_id, query_id):
+            dropped_same_side += 1
+            continue
+        filtered_pairs.append((indexed_id, query_id, score))
     _log(
-        f"[decision_making] matching_pairs_count={len(matching_pairs)} "
-        f"sample={_sample_pairs(matching_pairs)}"
+        f"[decision_making] matching_pairs_count={len(matching_pairs)} filtered_count={len(filtered_pairs)} "
+        f"dropped_same_side={dropped_same_side} idx_offset={idx_offset} sample={_sample_pairs(filtered_pairs)}"
     )
     # Do not reuse previous_pairs across workflow runs: the shared PVC cache is persistent.
     previous_pairs = None
@@ -438,25 +523,28 @@ def decision_making(config, matching_pairs, model):
     output_format = config.get("similarity", {}).get("output_format", "graphml")
     config["output_format"] = output_format
     final_pairs, predicted_graph = decide_matches(
-        mutualtop_pairs=matching_pairs,
+        mutualtop_pairs=filtered_pairs,
         previous_pairs=previous_pairs,
         model=model,
         output_format=output_format,
     )
+    canonical_pairs, dropped_same_side_final, dropped_unmapped_final = _filter_and_remap_pairs_to_idx(final_pairs, idx_offset)
+    predicted_graph = _build_similarity_graph_from_pairs(canonical_pairs, output_format=output_format)
     _log(
-        f"[decision_making] final_pairs_count={len(final_pairs)} "
-        f"sample={_sample_pairs(final_pairs)}"
+        f"[decision_making] final_pairs_count={len(final_pairs)} canonical_count={len(canonical_pairs)} "
+        f"dropped_same_side_final={dropped_same_side_final} dropped_unmapped_final={dropped_unmapped_final} "
+        f"sample={_sample_pairs(canonical_pairs)}"
     )
     if isinstance(predicted_graph, SimilarityGraph):
         graph = predicted_graph.graph
         _log(
             f"[decision_making] predicted_graph vertices={len(graph.vs)} edges={len(graph.es)}"
         )
-    update("predicted_matching_pairs", final_pairs)
+    update("predicted_matching_pairs", canonical_pairs)
     update("predicted_matching", predicted_graph)
-    _log(f"[decision_making] done pair_count={len(final_pairs)}")
-    _log(f"[decision_making] final_pairs={final_pairs[:5]}{'...' if len(final_pairs) > 5 else ''}")
-    return {"status": "decision_completed", "pair_count": len(final_pairs)}
+    _log(f"[decision_making] done pair_count={len(canonical_pairs)}")
+    _log(f"[decision_making] final_pairs={canonical_pairs[:5]}{'...' if len(canonical_pairs) > 5 else ''}")
+    return {"status": "decision_completed", "pair_count": len(canonical_pairs)}
 
 # @ccdecorator
 def evaluation(config):
@@ -465,7 +553,6 @@ def evaluation(config):
     config["output_format"] = output_format
     _log(
         f"[evaluation] ground_truth={config.get('ground_truth') or config.get('match_file')} "
-        f"similarity_file={_get_similarity_file(config)} output_format={output_format}"
     )
     result = compare_ground_truth(config)
     update("result", result)

@@ -60,10 +60,6 @@ def _predicted_pairs_from_graphml(similarity_file: str) -> Set[Pair]:
         raise FileNotFoundError(f"Similarity file not found: {similarity_file}")
 
     graph = Graph.Read_GraphML(similarity_file)
-    print(
-        f"[evaluation] loaded_graphml path={similarity_file} vertices={len(graph.vs)} edges={len(graph.es)}",
-        flush=True,
-    )
     predicted_pairs: Set[Pair] = set()
     for edge in graph.es:
         source = str(graph.vs[edge.source]["name"])
@@ -79,10 +75,6 @@ def _predicted_pairs_from_graphml(similarity_file: str) -> Set[Pair]:
                 for right in members[idx + 1:]:
                     if left != right:
                         predicted_pairs.add((str(left), str(right)))
-    print(
-        f"[evaluation] predicted_pairs_count={len(predicted_pairs)} sample={list(predicted_pairs)[:5]}",
-        flush=True,
-    )
     return predicted_pairs
 
 
@@ -114,18 +106,6 @@ def compare_ground_truth(configuration: dict) -> Dict[str, Dict[str, float]]:
 
     actual_pairs, left_target_rids = _ground_truth_pairs(ground_truth_file)
     predicted_pairs = _predicted_pairs_from_graphml(similarity_file)
-
-    print(
-        f"[evaluation] ground_truth_pairs_count={len(actual_pairs)} left_target_count={len(left_target_rids)} "
-        f"sample_actual={list(actual_pairs)[:5]} sample_left={list(left_target_rids)[:5]}",
-        flush=True,
-    )
-
-    overlap = predicted_pairs & actual_pairs
-    print(
-        f"[evaluation] overlap_count={len(overlap)} sample_overlap={list(overlap)[:5]}",
-        flush=True,
-    )
 
     all_metrics = _compute_metrics(predicted_pairs, actual_pairs)
 

@@ -1,5 +1,5 @@
 mode: "embedding-training-inference-evaluation"
-version_name: "try11"
+version_name: "try14"
 
 # incremental mode
 data_source_A: "Data_example/fodors_zagats-tableA.csv"
@@ -9,7 +9,7 @@ simulator_path: "services/dataStreamSimulator"
 kafka:
   topicid: "entity_resolution_process"
   groupid: "er_group"
-  bootstrap_servers: "kafka-server.argo.svc.cluster.local"
+  bootstrap_servers: "localhost"
   port: 9092
   partitions: 3
   replication_factor: 1
@@ -17,7 +17,7 @@ kafka:
   # sliding window strategy
   window_strategy: "count"       # "count" or "time"
   window_count: 26               # used if strategy is "count"
-  update_frequency: 0            # "csv" (file windows) or "kafka" (poll broker per iteration)
+  update_frequency: 0            # 0 = tumbling window, otherwise stride size
 
 ## meta_path:list or list of list (several paths), * 'rid' should appear in meta_path if it is setted
 # meta_path: ["name", "rid"]
@@ -25,15 +25,15 @@ kafka:
 # STATE MANAGEMENT
 state_management:
 # bert mode
-  bert-dir: "/app/data/bert"
+  bert-dir: "data/bert"
 # incremental mode. if execute several config files successively, the embedding_model-name (or version name) can not be the same
-  graph-dir: "/app/data/graph"
+  graph-dir: "data/graph"
   graph-name: ""
-  embedding-dir: "/app/data/embedding"
+  embedding-dir: "data/embedding"
   embedding_model-name: ""
-  feature_index-dir: "/app/data/index"
+  feature_index-dir: "data/index"
   feature_index-name: ""
-  predicted_match-dir: "/app/data/predicted"
+  predicted_match-dir: "data/predicted"
   predicted_match-name: ""
 
 # pipeline

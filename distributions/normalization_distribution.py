@@ -134,7 +134,7 @@ def normalization(config: dict, raw_data: dict | DataFrame, is_training: bool = 
             f"sample={_sample_records(raw_df)}"
         )
         _maybe_reset_rid_counter(config)
-        processed_data = index_normalization(config, raw_df, raw_data_path, is_training)
+        processed_data = index_normalization(config, raw_df, raw_data_path)
         if isinstance(processed_data, pd.DataFrame):
             _log(
                 f"[normalization_distribution] processed rows={len(processed_data)} cols={list(processed_data.columns)[:12]} "
